@@ -179,6 +179,8 @@ def run_hive_swarm(service, qc, shots=32768):
 
     # Run with SamplerV2 - simple list of circuits
     job = sampler.run([transpiled])
+    print(f" Job ID: {job.job_id()}")
+    print("⏳ Waiting for results...")
     result = job.result()
 
     # Extract counts - modern way
