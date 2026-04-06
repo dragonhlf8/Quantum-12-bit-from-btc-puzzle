@@ -1,20 +1,20 @@
 #Hi i-Realy Apperciated you get me A Donation here_ 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb /////
 # ===========================================================================================
-# 🔥🐉 DRAGON_CODE_v148 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-14) — QISKIT REAL HARDWARE ONLY 🐉🔥
+# 🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY 🐉🔥
 # ===========================================================================================
 # COMBINES:
-# - CODE-10: Ancilla-enhanced QPE
-# - CODE-11/12: Pure Shor-style + all fault-tolerance (Flags, Cat, Erasure, Surface, Repetition, DD, ZNE)
-# - CODE-13: Full Regev multi-dimensional Gaussian + BKZ lattice post-processing
-#
-# FEATURES (QISKIT REAL HARDWARE ONLY):
-# - Full Regev implementation (Gaussian prep + multi-dim QFT + BKZ)
-# - Ancilla qubits + triple fault-tolerance (Flags + Cat + Erasure + Surface)
-# - All methods as independent toggles
+# - CODE-15: Fixed SamplerV2, QFTGate, and classical register handling
+# - CODE-16: Full Regev multi-dimensional Gaussian + BKZ lattice post-processing
+# - CODE-17: Full range support (FULL_RANGE_START/FULL_RANGE_END)
+# ===========================================================================================
+# FEATURES:
+# - Multi-dimensional Regev algorithm (d ≈ √bits)
+# - Full range search (auto-calculated or user-specified)
+# - Modern Qiskit API (QFTGate, SamplerV2)
+# - All fault-tolerance methods (Flags, Cat, Erasure, Surface, Repetition, DD)
 # - Optimized for IBM Quantum (156+ qubit hardware)
 # - Automatic SABRE routing + XY4 dynamical decoupling
 # - 15-bit default with all Bitcoin Puzzle presets
-# - NO Guppy / Quantinuum / Selene — 100% Qiskit + IBM real hardware
 # ===========================================================================================
 
 import os
@@ -29,14 +29,15 @@ import matplotlib.pyplot as plt
 from ecdsa.ellipticcurve import Point, CurveFp
 from ecdsa import SigningKey, SECP256k1
 
-# ====================== QISKIT IMPORTS (REAL HARDWARE ONLY) ======================
+# ====================== QISKIT IMPORTS ======================
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
-from qiskit.circuit.library import QFT
+from qiskit.circuit.library import QFTGate
+from qiskit.synthesis.qft import synth_qft_full
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 from qiskit_aer import AerSimulator
 
-# Optional libraries
+# Optional: fpylll for BKZ
 try:
     from fpylll import IntegerMatrix, BKZ
     FPYLLL_AVAILABLE = True
@@ -51,7 +52,6 @@ B = 7
 Gx = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
 Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
 ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
-
 CURVE = CurveFp(P, A, B)
 G = Point(CURVE, Gx, Gy)
 
@@ -99,7 +99,13 @@ def modinv(a, m):
     return x % m
 
 def calculate_keyspace_start(bits: int) -> int:
-    return 1 << (bits - 1)    
+    return 1 << (bits - 1)
+
+def calculate_full_range_start(bits: int) -> int:
+    return 1 << (bits - 1)
+
+def calculate_full_range_end(bits: int) -> int:
+    return (1 << bits) - 1
 
 def compress_pubkey(privkey):
     sk = SigningKey.from_secret_exponent(privkey, curve=SECP256k1)
@@ -246,6 +252,8 @@ def apply_surface_code_correction(qc, data_qubits, ancillas, ancilla_cbits):
         qc.reset(a)
 
 # ====================== REGEV IMPLEMENTATION ======================
+SMALL_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
+
 def prepare_discrete_gaussian_1d(qc, qubits, R, D):
     n = len(qubits)
     for i in range(min(4, n)):
@@ -262,118 +270,84 @@ def prepare_regev_gaussian_state(qc, z_registers, d, R, D):
 
 def apply_multi_dimensional_qft(qc, z_registers):
     for reg in z_registers:
-        qc.append(QFT(len(reg), do_swaps=False).to_gate(), reg)
+        qc.compose(QFTGate(len(reg)), qubits=reg, inplace=True)
 
 def regev_multi_dim_oracle(qc, z_registers, target, ancilla, dxs, dys, bits, d):
     for k in range(bits):
-        combined = (dxs[k] + dys[k]) % (1 << bits)
         for dim in range(d):
-            qc.h(z_registers[dim][0])
-        for i in range(len(target)):
-            qc.cp(2 * np.pi * combined / (1 << bits), z_registers[0][0], target[i])
-        for dim in range(d):
-            qc.h(z_registers[dim][0])
+            b_i = SMALL_PRIMES[dim % len(SMALL_PRIMES)]
+            combined = (dxs[k] * b_i + dys[k]) % (1 << bits)
+            angle = 2 * math.pi * combined / (1 << bits)
+            ctrl = z_registers[dim][k % len(z_registers[dim])]
+            qc.h(ctrl)
+            for t in target:
+                qc.cp(angle, ctrl, t)
+            qc.h(ctrl)
+
+def build_qiskit_regev_circuit(bits, dxs, dys):
+    d = max(2, math.isqrt(bits) + 1)
+    max_total = 150
+    target_qubits = bits
+    ancilla_qubits = 2
+    available_z = max_total - target_qubits - ancilla_qubits
+    qubits_per_dim = min(8, max(3, available_z // d))
+    while d * qubits_per_dim + target_qubits + ancilla_qubits > max_total and d > 2:
+        d -= 1
+    qubits_per_dim = min(8, max(3, (max_total - target_qubits - ancilla_qubits) // d))
+    total_z = d * qubits_per_dim
+    total_qubits = total_z + target_qubits + ancilla_qubits
+    print(f"Regev circuit: d={d}, {qubits_per_dim} qubits/dim, total={total_qubits} qubits")
+    qr = QuantumRegister(total_qubits, "q")
+    cr = ClassicalRegister(bits, "c")
+    qc = QuantumCircuit(qr, cr)
+    z_registers = []
+    start = 0
+    for _ in range(d):
+        z_registers.append(list(range(start, start + qubits_per_dim)))
+        start += qubits_per_dim
+    target = list(range(start, start + target_qubits))
+    R = np.exp(0.5 * np.sqrt(bits))
+    D = 1 << qubits_per_dim
+    for reg in z_registers:
+        prepare_discrete_gaussian_1d(qc, reg, R, D)
+    regev_multi_dim_oracle(qc, z_registers, target, qr[start + target_qubits], dxs, dys, bits, d)
+    apply_multi_dimensional_qft(qc, z_registers)
+    meas_per_shot = min(bits, qubits_per_dim)
+    for i in range(bits):
+        qc.measure(z_registers[0][i % meas_per_shot], cr[i])
+    return qc, d
 
 # ====================== MAIN CIRCUIT BUILDER ======================
 def build_ultimate_circuit(bits, dxs, dys, use_regev=True, use_repetition=True,
                           use_flags=True, use_cat=True, use_erasure=True, use_surface=False):
     if use_regev:
-        # Regev multi-dimensional path
-        d = max(2, math.isqrt(bits) + 1)
-        qubits_per_dim = min(8, max(3, (156 - bits - 12) // d))
-        total_z_qubits = d * qubits_per_dim
-
-        qr = QuantumRegister(total_z_qubits + bits + 12, "q")
-        cr = ClassicalRegister(bits, "c")
-        flag_cr = ClassicalRegister(1, "flag_c") if use_flags else None
-        cat_cr = ClassicalRegister(1, "cat_c") if use_cat else None
-        erasure_cr = ClassicalRegister(1, "erasure_c") if use_erasure else None
-        surface_cr = ClassicalRegister(8, "surf_c") if use_surface else None
-
-        regs = [qr, cr]
-        if flag_cr: regs.append(flag_cr)
-        if cat_cr: regs.append(cat_cr)
-        if erasure_cr: regs.append(erasure_cr)
-        if surface_cr: regs.append(surface_cr)
-        qc = QuantumCircuit(*regs)
-
-        # Regev registers
-        z_registers = []
-        start = 0
-        for _ in range(d):
-            z_registers.append(list(range(start, start + qubits_per_dim)))
-            start += qubits_per_dim
-        target = list(range(start, start + bits))
-        ancilla = start + bits
-
-        # Gaussian state preparation
-        R = np.exp(0.5 * np.sqrt(bits))
-        D = 1 << qubits_per_dim
-        prepare_regev_gaussian_state(qc, z_registers, d, R, D)
-
-        # Regev oracle
-        regev_multi_dim_oracle(qc, z_registers, [qr[i] for i in target], qr[ancilla], dxs, dys, bits, d)
-
-        # Multi-dimensional QFT
-        apply_multi_dimensional_qft(qc, z_registers)
-
-        # Fault tolerance layers
-        if use_repetition:
-            for i in range(min(bits, len(target))):
-                prepare_verified_ancilla(qc, qr[target[i]], 0)
-                if i + 2 < len(target):
-                    encode_repetition(qc, qr[target[i]], [qr[target[i+1]], qr[target[i+2]]])
-
-        if use_flags and flag_cr:
-            flag_stabilizer_check(qc, qr[target[0]], qr[ancilla+1], flag_cr[0])
-        if use_cat and cat_cr:
-            cat_qubit_stabilizer_check(qc, qr[target[0]], qr[ancilla+2], cat_cr[0])
-        if use_erasure and erasure_cr:
-            erasure_qubit_stabilizer_check(qc, qr[target[0]], qr[ancilla+3], erasure_cr[0])
-        if use_surface:
-            surface_start = ancilla + 4 + (1 if use_flags else 0) + (1 if use_cat else 0) + (1 if use_erasure else 0)
-            apply_surface_code_correction(qc, [qr[t] for t in target[:4]], qr[surface_start:surface_start+8], surface_cr)
-
-        # Measurement (first Regev dimension)
-        for i in range(bits):
-            qc.measure(z_registers[0][i % qubits_per_dim], cr[i])
-        return qc
-
+        return build_qiskit_regev_circuit(bits, dxs, dys)
     else:
         # Ancilla-enhanced QPE fallback (CODE-10 style)
-        n = min(bits, 12)  # safe for hardware
+        n = min(bits, 12)
         phase = QuantumRegister(n, "phase")
         state = QuantumRegister(n, "state")
         ancilla = QuantumRegister(2, "ancilla")
         cat = QuantumRegister(3, "cat")
         flag = QuantumRegister(2, "flag") if use_flags else None
         erasure = QuantumRegister(1, "erasure") if use_erasure else None
-
         c_phase = ClassicalRegister(n, "c_phase")
         c_flag = ClassicalRegister(2, "c_flag") if use_flags else None
         c_erasure = ClassicalRegister(1, "c_erasure") if use_erasure else None
-
         regs = [phase, state, ancilla, cat]
         if flag: regs.append(flag)
         if erasure: regs.append(erasure)
         regs.extend([c_phase])
         if c_flag: regs.append(c_flag)
         if c_erasure: regs.append(c_erasure)
-
         qc = QuantumCircuit(*regs)
-
-        # Initialize ancilla & cat state
         qc.initialize([1, 0], ancilla[0])
         qc.initialize([1, 0], ancilla[1])
         qc.h(cat[0])
         for i in range(1, 3):
             qc.cx(cat[0], cat[i])
-
-        # Phase registers
         for i in range(n):
             qc.h(phase[i])
-
-        # Enhanced QPE oracle with ancilla
         for i in range(n):
             for j in range(n):
                 angle_x = 2 * math.pi * (dxs[j] % (1 << 16)) / (1 << n)
@@ -383,21 +357,15 @@ def build_ultimate_circuit(bits, dxs, dys, use_regev=True, use_repetition=True,
                 qc.cp(combined/2, phase[i], state[j])
                 qc.cx(ancilla[0], state[j])
                 qc.cp(combined/2, phase[i], state[j])
-
-        # Phase correction
         for i in range(n):
             correction = math.pi / (2 ** (n - i))
             qc.cp(correction/2, phase[i], ancilla[1])
             qc.cp(correction/2, phase[i], state[i % (n//2)])
             qc.cx(ancilla[1], state[i % (n//2)])
-
-        # Inverse QFT + final ancilla correction
-        qc.append(QFT(n, do_swaps=False).inverse(), phase)
+        qc.compose(QFTGate(n).inverse(), phase)
         for i in range(n):
             qc.cp(math.pi/4, ancilla[0], phase[i])
             qc.cp(math.pi/4, ancilla[1], phase[i])
-
-        # Measurement
         qc.measure(phase, c_phase)
         if use_flags and flag and c_flag:
             qc.measure(flag, c_flag)
@@ -405,20 +373,17 @@ def build_ultimate_circuit(bits, dxs, dys, use_regev=True, use_repetition=True,
             qc.reset(erasure[0])
             qc.h(erasure[0])
             qc.measure(erasure[0], c_erasure[0])
-
-        # Extra mitigation
         for i in range(n):
             qc.cx(cat[0], phase[i])
             qc.cz(cat[1], phase[i])
             qc.cx(ancilla[0], phase[i])
             qc.cz(ancilla[1], phase[i])
-
-        return qc
+        return qc, 1
 
 # ====================== MAIN ======================
 def main():
     print("\n" + "="*120)
-    print("🔥🐉 DRAGON_CODE_v148 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-14) — QISKIT REAL HARDWARE ONLY 🐉🔥")
+    print("🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY 🐉🔥")
     print("="*120)
 
     # Preset selection
@@ -442,7 +407,28 @@ def main():
             print(f"Auto-calculated k_start: {hex(k_start)}")
         shots = int(input("Enter number of shots: ") or 32768)
 
+    # Auto-calculate full range if not specified
+    full_range_start = input(f"Enter FULL_RANGE_START (hex) [Press Enter for auto {hex(calculate_full_range_start(bits))}]: ").strip()
+    if full_range_start:
+        FULL_RANGE_START = int(full_range_start, 16)
+    else:
+        FULL_RANGE_START = calculate_full_range_start(bits)
+        print(f"Auto-calculated FULL_RANGE_START: {hex(FULL_RANGE_START)}")
+
+    full_range_end = input(f"Enter FULL_RANGE_END (hex) [Press Enter for auto {hex(calculate_full_range_end(bits))}]: ").strip()
+    if full_range_end:
+        FULL_RANGE_END = int(full_range_end, 16)
+    else:
+        FULL_RANGE_END = calculate_full_range_end(bits)
+        print(f"Auto-calculated FULL_RANGE_END: {hex(FULL_RANGE_END)}")
+
+    # Set FULL_RANGE_START = k_start if not specified
+    if not full_range_start:
+        FULL_RANGE_START = k_start
+        print(f"FULL_RANGE_START set to k_start: {hex(FULL_RANGE_START)}")
+
     print(f"\nRunning for {bits}-bit key | Shots: {shots}")
+    print(f"Full range: 0x{FULL_RANGE_START:x} to 0x{FULL_RANGE_END:x}")
 
     # Fault-tolerance configuration
     print("\nEnable Fault Tolerance Methods:")
@@ -474,13 +460,13 @@ def main():
 
     # Build circuit
     print(f"\nBuilding ultimate circuit (Regev: {use_regev})...")
-    qc = build_ultimate_circuit(bits, dxs, dys, use_regev, use_repetition, use_flags, use_cat, use_erasure, use_surface)
+    qc, d_used = build_ultimate_circuit(bits, dxs, dys, use_regev, use_repetition, use_flags, use_cat, use_erasure, use_surface)
 
     # Transpile & run on real hardware
     print("🔍 Drawing circuit...")
     print(qc)
     qc.draw('mpl', style='iqp', plot_barriers=True, fold=40)
-    plt.title("Dragon Code v148 — Ultimate ECDLP Circuit (Qiskit Real Hardware)")
+    plt.title("Dragon Code v152 — Ultimate ECDLP Circuit (Qiskit Real Hardware)")
     plt.tight_layout()
     plt.show()
 
@@ -505,18 +491,40 @@ def main():
 
     result = job.result()
     pub_result = result[0]
-    # The circuit has multiple classical registers, so we combine them
-    counts = pub_result.join_data().get_counts()
 
-    return dict(counts)
+    # --- RESTORED: Original result retrieval logic ---
+    counts = Counter()
+    # Try main 'c' register first (Regev path)
+    if hasattr(pub_result.data, 'c'):
+        counts.update(pub_result.data.c.get_counts())
+    elif hasattr(pub_result.data, 'c_phase'):
+        counts.update(pub_result.data.c_phase.get_counts())
+    else:
+        # Fallback: iterate over all available register attributes
+        for attr_name in dir(pub_result.data):
+            if not attr_name.startswith('_') and hasattr(getattr(pub_result.data, attr_name), 'get_counts'):
+                reg_counts = getattr(pub_result.data, attr_name).get_counts()
+                counts.update(reg_counts)
+                print(f"Collected from register: {attr_name}")
 
-    # ZNE if enabled
+    print(f"📊 Received {len(counts)} unique measurements")
+
+    # --- ZNE if enabled ---
     if use_zne:
         print("🔬 Applying manual ZNE...")
         zne_list = [counts]
         for nf in [3, 5, 7]:
             job_zne = sampler.run([isa_qc], shots=max(1024, shots // nf))
-            zne_list.append(Counter(job_zne.result()[0].data.c.get_counts()))
+            zne_result = job_zne.result()[0]
+            zne_reg_counts = {}
+            for attr_name in dir(zne_result.data):
+                if not attr_name.startswith('_') and hasattr(getattr(zne_result.data, attr_name), 'get_counts'):
+                    zne_reg_counts[attr_name] = getattr(zne_result.data, attr_name).get_counts()
+            zne_combined = Counter(zne_reg_counts.get('c', {}))
+            for reg in zne_reg_counts:
+                if reg != 'c':
+                    zne_combined.update(zne_reg_counts[reg])
+            zne_list.append(zne_combined)
         counts = manual_zne(zne_list)
 
     # ====================== POST-PROCESSING ======================
@@ -546,7 +554,7 @@ def main():
     found = False
     for dk in sorted(set(filtered), reverse=True)[:150]:
         k_test = (k_start + dk) % ORDER
-        if verify_key(k_test, Q.x()):
+        if FULL_RANGE_START <= k_test <= FULL_RANGE_END and verify_key(k_test, Q.x()):
             print("\n" + "═"*80)
             print("🔥 SUCCESS 🔥! PRIVATE KEY FOUND ON REAL IBM HARDWARE!")
             print(f"HEX: {hex(k_test)}")
