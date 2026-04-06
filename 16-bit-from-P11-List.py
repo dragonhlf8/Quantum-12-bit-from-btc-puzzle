@@ -220,10 +220,10 @@ def run_quantum_job(service, qc, shots=32768):
 
         # Get results using the correct method
         result = job.result()
-
-        # Extract counts - working method from CODE-8
         pub_result = result[0]
-        counts = pub_result.data.meas.get_counts()
+        
+        # The circuit has multiple classical registers, so we combine them
+        counts = pub_result.join_data().get_counts()
 
         return dict(counts)
 
