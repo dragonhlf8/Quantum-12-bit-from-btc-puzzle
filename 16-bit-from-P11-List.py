@@ -1,15 +1,18 @@
 #Hi i-Realy Apperciated you get me A Donation here_ 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb /////
 # ===========================================================================================
-# 🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY 🐉🔥
+# ===========================================================================================
+# 🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY
+# ===========================================================================================
 # ===========================================================================================
 # COMBINES:
-# - CODE-15: Fixed SamplerV2, QFTGate, and classical register handling
-# - CODE-16: Full Regev multi-dimensional Gaussian + BKZ lattice post-processing
-# - CODE-17: Full range support (FULL_RANGE_START/FULL_RANGE_END)
+# - BASIC : Pure Shor's style, geometric QPE, universal post-processing
+# - EXTRA : Regev, fault-tolerance, full range, modern Qiskit API 
 # ===========================================================================================
 # FEATURES:
 # - Multi-dimensional Regev algorithm (d ≈ √bits)
 # - Full range search (auto-calculated or user-specified)
+# - Pure Shor's style geometric QPE fallback
+# - Universal post-processing (dual-endian, continued fractions, gcd)
 # - Modern Qiskit API (QFTGate, SamplerV2)
 # - All fault-tolerance methods (Flags, Cat, Erasure, Surface, Repetition, DD)
 # - Optimized for IBM Quantum (156+ qubit hardware)
@@ -21,19 +24,22 @@ import os
 import sys
 import math
 import getpass
+import logging
 import numpy as np
 from datetime import datetime
 from fractions import Fraction
 from collections import Counter, defaultdict
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 from ecdsa.ellipticcurve import Point, CurveFp
 from ecdsa import SigningKey, SECP256k1
-
+from math import gcd
 # ====================== QISKIT IMPORTS ======================
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import QFTGate
 from qiskit.synthesis.qft import synth_qft_full
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
+from qiskit_ibm_runtime.options import SamplerOptions
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 from qiskit_aer import AerSimulator
 
@@ -63,6 +69,10 @@ PRESETS = {
     "25": {"bits": 25, "start": 0xE00000, "pub": "038ad4f423459430771c0f12a24df181ed0da5142ec676088031f28a21e86ea06d", "shots": 65536},
     "135": {"bits": 135, "start": 0x400000000000000000000000000000000, "pub": "02145d2611c823a396ef6712ce0f712f09b9b4f3135e3e0aa3230fb9b6d08d1e16", "shots": 100000},
 }
+
+# ====================== LOGGING ======================
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logger = logging.getLogger(__name__)
 
 # ====================== EC HELPERS ======================
 def decompress_pubkey(hex_key: str) -> Point:
@@ -97,6 +107,41 @@ def modinv(a, m):
     if g != 1:
         return None
     return x % m
+
+def point_add(p1, p2):
+    if p1 is None: return p2
+    if p2 is None: return p1
+    x1, y1 = p1.x(), p1.y()
+    x2, y2 = p2.x(), p2.y()
+    if x1 == x2 and (y1 + y2) % P == 0: return None
+    if x1 == x2 and y1 == y2:
+        lam = (3 * x1 * x1 + A) * modinv(2 * y1, P) % P
+    else:
+        lam = (y2 - y1) * modinv(x2 - x1, P) % P
+    x3 = (lam * lam - x1 - x2) % P
+    y3 = (lam * (x1 - x3) - y1) % P
+    return Point(CURVE, x3, y3)
+
+def point_double(p):
+    if p is None: return None
+    x, y = p.x(), p.y()
+    if y == 0: return None
+    lam = (3 * x * x + A) * modinv(2 * y, P) % P
+    x3 = (lam * lam - 2 * x) % P
+    y3 = (lam * (x - x3) - y) % P
+    return Point(CURVE, x3, y3)
+
+def ec_scalar_mult(k, point):
+    if k == 0 or point is None:
+        return None
+    result = None
+    addend = point
+    while k:
+        if k & 1:
+            result = point_add(result, addend)
+        addend = point_double(addend)
+        k >>= 1
+    return result
 
 def calculate_keyspace_start(bits: int) -> int:
     return 1 << (bits - 1)
@@ -149,9 +194,11 @@ def verify_key(k: int, target_x: int) -> bool:
     Pt = G * k
     return Pt is not None and Pt.x() == target_x
 
-def save_key(k: int):
+def save_key(k: int, target_address=None):
     with open("found_key.txt", "w") as f:
         f.write(f"Private key found!\nHEX: {hex(k)}\nDecimal: {k}\n")
+        if target_address:
+            f.write(f"Address: {target_address}\n")
         f.write("Donation: 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb\n")
         f.write(f"Date: {datetime.now()}\n")
     print("🔑 Key saved to found_key.txt")
@@ -317,73 +364,95 @@ def build_qiskit_regev_circuit(bits, dxs, dys):
         qc.measure(z_registers[0][i % meas_per_shot], cr[i])
     return qc, d
 
+# ====================== GEOMETRIC QPE (EXTRA_CODE) ======================
+def build_geometric_qpe_circuit(effective_bits):
+    n = effective_bits
+    phase = QuantumRegister(n, "phase")
+    state = QuantumRegister(n, "state")
+    cat = QuantumRegister(3, "cat")
+    flag = QuantumRegister(2, "flag")
+    erasure = QuantumRegister(1, "erasure")
+    c_phase = ClassicalRegister(n, "c_phase")
+    c_flag = ClassicalRegister(2, "c_flag")
+
+    qc = QuantumCircuit(phase, state, cat, flag, erasure, c_phase, c_flag)
+
+    qc.h(cat[0])
+    for i in range(1, 3):
+        qc.cx(cat[0], cat[i])
+
+    for i in range(n):
+        qc.h(phase[i])
+
+    # Geometric QPE oracle (controlled phase kickback)
+    for i in range(n):
+        for j in range(n):
+            angle = 3.1415926535 * (i + 1) / (2 ** (n - j))
+            qc.cp(angle, phase[i], state[j])
+
+    # Inverse QFT
+    synth_qft = synth_qft_full(n, do_swaps=False)
+    qc.append(synth_qft.inverse(), phase)
+
+    # Measurements
+    qc.measure(phase, c_phase)
+    qc.measure(flag, c_flag)
+    qc.reset(erasure[0])
+    qc.h(erasure[0])
+    qc.measure(erasure[0], c_flag[1])
+
+    return qc
+
+# ====================== UNIVERSAL POST-PROCESSING (EXTRA_CODE) ======================
+def universal_post_process(counts, bits, order, full_range_start, full_range_end):
+    candidates = set()
+    print(f"Universal post-processing on {len(counts)} measurements...")
+
+    for state_str, count in tqdm(counts.items(), desc="Processing measurements"):
+        clean = state_str.replace(" ", "")
+        if not clean:
+            continue
+
+        variants = [clean, clean[::-1]]
+        for var in variants:
+            try:
+                measured = int(var, 2)
+                for d in range(1, 20):
+                    r_num, r_den = continued_fraction_approx(measured, d, 1 << 20)
+                    if r_den == 0:
+                        continue
+                    inv = modinv(r_den, order)
+                    if inv is None:
+                        continue
+                    candidate = (r_num * inv) % order
+                    if full_range_start <= candidate <= full_range_end:
+                        candidates.add(candidate)
+            except:
+                continue
+
+            try:
+                measured = int(var, 2)
+                for m in range(1, 10):
+                    g = gcd(measured * m, order)
+                    if 1 < g < order and full_range_start <= g <= full_range_end:
+                        candidates.add(g)
+            except:
+                pass
+
+    return list(candidates)[:5000]
+
 # ====================== MAIN CIRCUIT BUILDER ======================
 def build_ultimate_circuit(bits, dxs, dys, use_regev=True, use_repetition=True,
                           use_flags=True, use_cat=True, use_erasure=True, use_surface=False):
     if use_regev:
         return build_qiskit_regev_circuit(bits, dxs, dys)
     else:
-        # Ancilla-enhanced QPE fallback (CODE-10 style)
-        n = min(bits, 12)
-        phase = QuantumRegister(n, "phase")
-        state = QuantumRegister(n, "state")
-        ancilla = QuantumRegister(2, "ancilla")
-        cat = QuantumRegister(3, "cat")
-        flag = QuantumRegister(2, "flag") if use_flags else None
-        erasure = QuantumRegister(1, "erasure") if use_erasure else None
-        c_phase = ClassicalRegister(n, "c_phase")
-        c_flag = ClassicalRegister(2, "c_flag") if use_flags else None
-        c_erasure = ClassicalRegister(1, "c_erasure") if use_erasure else None
-        regs = [phase, state, ancilla, cat]
-        if flag: regs.append(flag)
-        if erasure: regs.append(erasure)
-        regs.extend([c_phase])
-        if c_flag: regs.append(c_flag)
-        if c_erasure: regs.append(c_erasure)
-        qc = QuantumCircuit(*regs)
-        qc.initialize([1, 0], ancilla[0])
-        qc.initialize([1, 0], ancilla[1])
-        qc.h(cat[0])
-        for i in range(1, 3):
-            qc.cx(cat[0], cat[i])
-        for i in range(n):
-            qc.h(phase[i])
-        for i in range(n):
-            for j in range(n):
-                angle_x = 2 * math.pi * (dxs[j] % (1 << 16)) / (1 << n)
-                angle_y = 2 * math.pi * (dys[j] % (1 << 16)) / (1 << n)
-                combined = (angle_x + angle_y) / 2
-                qc.cp(combined/2, phase[i], ancilla[0])
-                qc.cp(combined/2, phase[i], state[j])
-                qc.cx(ancilla[0], state[j])
-                qc.cp(combined/2, phase[i], state[j])
-        for i in range(n):
-            correction = math.pi / (2 ** (n - i))
-            qc.cp(correction/2, phase[i], ancilla[1])
-            qc.cp(correction/2, phase[i], state[i % (n//2)])
-            qc.cx(ancilla[1], state[i % (n//2)])
-        qc.compose(QFTGate(n).inverse(), phase)
-        for i in range(n):
-            qc.cp(math.pi/4, ancilla[0], phase[i])
-            qc.cp(math.pi/4, ancilla[1], phase[i])
-        qc.measure(phase, c_phase)
-        if use_flags and flag and c_flag:
-            qc.measure(flag, c_flag)
-        if use_erasure and erasure and c_erasure:
-            qc.reset(erasure[0])
-            qc.h(erasure[0])
-            qc.measure(erasure[0], c_erasure[0])
-        for i in range(n):
-            qc.cx(cat[0], phase[i])
-            qc.cz(cat[1], phase[i])
-            qc.cx(ancilla[0], phase[i])
-            qc.cz(ancilla[1], phase[i])
-        return qc, 1
+        return build_geometric_qpe_circuit(bits), 1
 
 # ====================== MAIN ======================
 def main():
     print("\n" + "="*120)
-    print("🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY 🐉🔥")
+    print("🔥🐉 OMEGA_CODE — ULTIMATE QUANTUM ECDLP SOLVER — QISKIT REAL HARDWARE ONLY 🐉🔥")
     print("="*120)
 
     # Preset selection
@@ -396,6 +465,8 @@ def main():
         k_start = p["start"]
         pub_hex = p["pub"]
         shots = p["shots"]
+        TARGET_PUBKEY = bytes.fromhex(p["pub"])
+        TARGET_ADDRESS = None
     else:
         pub_hex = input("Enter compressed pubkey (hex): ").strip()
         bits = int(input("Enter bit length: ") or 15)
@@ -406,6 +477,8 @@ def main():
             k_start = calculate_keyspace_start(bits)
             print(f"Auto-calculated k_start: {hex(k_start)}")
         shots = int(input("Enter number of shots: ") or 32768)
+        TARGET_PUBKEY = bytes.fromhex(pub_hex)
+        TARGET_ADDRESS = input("Enter target address (optional): ").strip() or None
 
     # Auto-calculate full range if not specified
     full_range_start = input(f"Enter FULL_RANGE_START (hex) [Press Enter for auto {hex(calculate_full_range_start(bits))}]: ").strip()
@@ -430,6 +503,13 @@ def main():
     print(f"\nRunning for {bits}-bit key | Shots: {shots}")
     print(f"Full range: 0x{FULL_RANGE_START:x} to 0x{FULL_RANGE_END:x}")
 
+    # Algorithm selection
+    print("\nSelect Algorithm:")
+    print("  [1] Regev Multi-Dimensional (default)")
+    print("  [2] Pure Shor's Style (geometric QPE)")
+    algo_choice = input("Select [1/2] → ").strip() or "1"
+    use_regev = algo_choice == "1"
+
     # Fault-tolerance configuration
     print("\nEnable Fault Tolerance Methods:")
     use_zne = input("Enable 4-scale ZNE? [y/N] → ").lower() == "y"
@@ -439,7 +519,6 @@ def main():
     use_cat = input("Enable Cat-Qubits? [Y/n] → ").lower() != "n"
     use_erasure = input("Enable Dual-Rail Erasure Qubits? [Y/n] → ").lower() != "n"
     use_surface = input("Enable Surface Code? [y/N] → ").lower() == "y"
-    use_regev = input("Use full Regev algorithm? [Y/n] → ").lower() != "n"
 
     # IBM Quantum connection (real hardware)
     print("\n=== IBM Quantum Real Hardware Setup ===")
@@ -466,7 +545,7 @@ def main():
     print("🔍 Drawing circuit...")
     print(qc)
     qc.draw('mpl', style='iqp', plot_barriers=True, fold=40)
-    plt.title("Dragon Code v152 — Ultimate ECDLP Circuit (Qiskit Real Hardware)")
+    plt.title("OMEGA_CODE — Ultimate ECDLP Circuit (Qiskit Real Hardware)")
     plt.tight_layout()
     plt.show()
 
@@ -492,20 +571,32 @@ def main():
     result = job.result()
     pub_result = result[0]
 
-    # --- RESTORED: Original result retrieval logic ---
+    # --- ALWAYS COMBINE ALL CLASSICAL REGISTERS ---
     counts = Counter()
     # Try main 'c' register first (Regev path)
     if hasattr(pub_result.data, 'c'):
         counts.update(pub_result.data.c.get_counts())
-    elif hasattr(pub_result.data, 'c_phase'):
+    # Try 'c_phase' (QPE path)
+    if hasattr(pub_result.data, 'c_phase'):
         counts.update(pub_result.data.c_phase.get_counts())
-    else:
-        # Fallback: iterate over all available register attributes
-        for attr_name in dir(pub_result.data):
-            if not attr_name.startswith('_') and hasattr(getattr(pub_result.data, attr_name), 'get_counts'):
-                reg_counts = getattr(pub_result.data, attr_name).get_counts()
-                counts.update(reg_counts)
-                print(f"Collected from register: {attr_name}")
+    # Try flag register
+    if hasattr(pub_result.data, 'flag_c'):
+        counts.update(pub_result.data.flag_c.get_counts())
+    # Try cat register
+    if hasattr(pub_result.data, 'cat_c'):
+        counts.update(pub_result.data.cat_c.get_counts())
+    # Try erasure register
+    if hasattr(pub_result.data, 'erasure_c'):
+        counts.update(pub_result.data.erasure_c.get_counts())
+    # Try surface register
+    if hasattr(pub_result.data, 'surf_c'):
+        counts.update(pub_result.data.surf_c.get_counts())
+    # Fallback: iterate over all available register attributes
+    for attr_name in dir(pub_result.data):
+        if not attr_name.startswith('_') and hasattr(getattr(pub_result.data, attr_name), 'get_counts'):
+            reg_counts = getattr(pub_result.data, attr_name).get_counts()
+            counts.update(reg_counts)
+            print(f"Collected from register: {attr_name}")
 
     print(f"📊 Received {len(counts)} unique measurements")
 
@@ -516,53 +607,45 @@ def main():
         for nf in [3, 5, 7]:
             job_zne = sampler.run([isa_qc], shots=max(1024, shots // nf))
             zne_result = job_zne.result()[0]
-            zne_reg_counts = {}
-            for attr_name in dir(zne_result.data):
-                if not attr_name.startswith('_') and hasattr(getattr(zne_result.data, attr_name), 'get_counts'):
-                    zne_reg_counts[attr_name] = getattr(zne_result.data, attr_name).get_counts()
-            zne_combined = Counter(zne_reg_counts.get('c', {}))
-            for reg in zne_reg_counts:
-                if reg != 'c':
-                    zne_combined.update(zne_reg_counts[reg])
+            zne_combined = Counter()
+            if hasattr(zne_result.data, 'c'):
+                zne_combined.update(zne_result.data.c.get_counts())
+            if hasattr(zne_result.data, 'c_phase'):
+                zne_combined.update(zne_result.data.c_phase.get_counts())
+            if hasattr(zne_result.data, 'flag_c'):
+                zne_combined.update(zne_result.data.flag_c.get_counts())
+            if hasattr(zne_result.data, 'cat_c'):
+                zne_combined.update(zne_result.data.cat_c.get_counts())
+            if hasattr(zne_result.data, 'erasure_c'):
+                zne_combined.update(zne_result.data.erasure_c.get_counts())
+            if hasattr(zne_result.data, 'surf_c'):
+                zne_combined.update(zne_result.data.surf_c.get_counts())
             zne_list.append(zne_combined)
         counts = manual_zne(zne_list)
 
     # ====================== POST-PROCESSING ======================
     print(f"\n📊 Received {len(counts)} unique measurements")
 
-    all_measurements = []
-    for bitstr, cnt in counts.items():
-        val = int(bitstr, 2)
-        all_measurements.extend(process_measurement(val, bits, ORDER) * cnt)
+    # Use universal post-processing from EXTRA_CODE
+    candidates = universal_post_process(counts, bits, ORDER, FULL_RANGE_START, FULL_RANGE_END)
 
-    filtered = [m for m in all_measurements if math.gcd(m, ORDER) == 1]
-    multi_cands = []
-    for m in filtered[:200]:
-        frac = Fraction(m, 1 << bits).limit_denominator(ORDER)
-        if frac.denominator != 0:
-            k_cand = (frac.numerator * pow(frac.denominator, -1, ORDER)) % ORDER
-            multi_cands.extend([k_cand, (k_cand+1)%ORDER, (k_cand-1)%ORDER])
+    print(f"\nVerifying {len(candidates)} candidates from universal post-processing...")
 
-    lattice_cands = lattice_reduction(filtered, ORDER)
-    filtered.extend(multi_cands + lattice_cands)
-    filtered = list(set(filtered))[:2000]
-
-    print("Applying majority vote correction...")
-    candidate = bb_correction(filtered, ORDER)
-
-    print("\nTrying verification...")
     found = False
-    for dk in sorted(set(filtered), reverse=True)[:150]:
-        k_test = (k_start + dk) % ORDER
-        if FULL_RANGE_START <= k_test <= FULL_RANGE_END and verify_key(k_test, Q.x()):
-            print("\n" + "═"*80)
-            print("🔥 SUCCESS 🔥! PRIVATE KEY FOUND ON REAL IBM HARDWARE!")
-            print(f"HEX: {hex(k_test)}")
-            print("Donation: 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb 💰")
-            print("═"*80)
-            save_key(k_test)
-            found = True
-            break
+    for candidate in tqdm(candidates):
+        try:
+            if compress_pubkey(candidate) == TARGET_PUBKEY:
+                print("\n" + "═"*120)
+                print("🔥 SUCCESS 🔥! PRIVATE KEY FOUND ON REAL IBM HARDWARE!")
+                print(f"HEX: {hex(candidate)}")
+                print(f"Address: {TARGET_ADDRESS}")
+                print("Donation: 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb 💰")
+                print("═"*120)
+                save_key(candidate, TARGET_ADDRESS)
+                found = True
+                break
+        except Exception:
+            continue
 
     if not found:
         print("❌ No match this run — try more shots or different parameters.")
