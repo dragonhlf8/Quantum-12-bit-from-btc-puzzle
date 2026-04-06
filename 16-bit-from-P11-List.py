@@ -5,7 +5,8 @@
 # Features:
 # - Runs ONLY on real IBM Quantum hardware (NO SIMULATOR)
 # - XY4 and SABRE transpilation (as in reference code)
-# - PRESETS for common bit lengths and targets
+# - PRESETS for common bit lengths and targets (16-bit as default)
+# - Modern result retrieval logic (as in your example)
 # - Custom mode for arbitrary parameters
 # - Interactive input for target pubkey, bits, shots, and hardware selection
 # - IBM Quantum API token and CRN instance REQUIRED
@@ -39,14 +40,15 @@ G = Point(CURVE, Gx, Gy)
 
 # ====================== PRESETS ======================
 PRESETS = {
+    "16": {"bits": 16, "start": 0x8000, "pub": "03ccb5e3ad4abc7900ebfbd81621e31ec2b17b346090e741921a91bf9cadf934c5", "shots": 32768},
     "21": {"bits": 21, "start": 0x90000, "pub": "037d14b19a95fe400b88b0debe31ecc3c0ec94daea90d13057bde89c5f8e6fc25c", "shots": 16384},
     "25": {"bits": 25, "start": 0xE00000, "pub": "038ad4f423459430771c0f12a24df181ed0da5142ec676088031f28a21e86ea06d", "shots": 65536},
     "135": {"bits": 135, "start": 0x400000000000000000000000000000000, "pub": "02145d2611c823a396ef6712ce0f712f09b9b4f3135e3e0aa3230fb9b6d08d1e16", "shots": 100000},
 }
 
 # Defaults (can be overridden by user input)
-TARGET_PUBKEY = bytes.fromhex("03ccb5e3ad4abc7900ebfbd81621e31ec2b17b346090e741921a91bf9cadf934c5") # PublicKey Correspond for 16-bit Decimal=32803 / HEX=0x00008023
-TARGET_ADDRESS = "17wsUeKMK1JgjGzdfYBjefDdyakNCK9xVx" # Corresponding to 16-bit Decimal=32803 / HEX=0x00008023
+TARGET_PUBKEY = bytes.fromhex("03ccb5e3ad4abc7900ebfbd81621e31ec2b17b346090e741921a91bf9cadf934c5")
+TARGET_ADDRESS = "17wsUeKMK1JgjGzdfYBjefDdyakNCK9xVx"
 BITS = 16
 SHOTS = 32768
 FULL_RANGE_START = 0x8000
@@ -144,30 +146,40 @@ def run_circuit(qc, shots, api_token, crn=None, use_xy4=False, use_sabre=False):
         QiskitRuntimeService.save_account(channel="ibm_quantum_platform", token=api_token, overwrite=True)
         service = QiskitRuntimeService(instance=crn) if crn else QiskitRuntimeService()
         backend = service.least_busy(operational=True, simulator=False, min_num_qubits=156)
-        logger.info(f"Using IBM backend: {backend.name}")
 
         # SamplerOptions (XY4 enabled via options)
         options = SamplerOptions()
         options.dynamical_decoupling.enable = use_xy4
         options.dynamical_decoupling.sequence_type = "XY4"
 
-        # Transpile with SABRE routing
+        sampler = SamplerV2(mode=backend, options=options)
+        backend_name = backend.name if hasattr(backend, 'name') else str(backend)
+        print(f"📡 Using backend: {backend_name}")
+        print(f"📡 Submitting job to backend: {backend_name}")
+
+        # Transpile once
         pm = generate_preset_pass_manager(
             optimization_level=3,
             backend=backend,
             routing_method="sabre" if use_sabre else None
         )
         transpiled = pm.run(qc)
+        print(qc)
+        print(f"Transpiled circuit depth: {transpiled.depth()}")
+        print(f"Transpiled circuit size : {transpiled.size()}")
+        print(f"   Shots requested     : {shots}")
 
-        logger.info(f"Transpiled circuit depth: {transpiled.depth()}")
-        logger.info(f"Transpiled circuit size : {transpiled.size()}")
-
-        sampler = SamplerV2(mode=backend, options=options)
-        job = sampler.run([transpiled], shots=shots)
-        logger.info(f"Job ID: {job.job_id()}")
-        logger.info("Waiting for results...")
+        # Run with SamplerV2 - simple list of circuits
+        job = sampler.run([transpiled])
+        print(f" Job ID: {job.job_id()}")
+        print("⏳ Waiting for results...")
         result = job.result()
-        return result[0].data.c.get_counts()
+
+        # Extract counts - modern way
+        pub_result = result[0]
+        counts = pub_result.join_data().get_counts()
+
+        return dict(counts)
     except Exception as e:
         logger.error(f"IBM backend error: {e}")
         logger.error("This code only runs on real IBM hardware. Exiting.")
@@ -206,8 +218,8 @@ def main():
     print("="*100)
 
     # Preset or Custom
-    print("\nAvailable PRESETS: 21, 25, 135, c = Custom")
-    preset_choice = input("Select preset [21/25/135/c] → ").strip().lower()
+    print("\nAvailable PRESETS: 16, 21, 25, 135, c = Custom")
+    preset_choice = input("Select preset [16/21/25/135/c] → ").strip().lower()
     if preset_choice in PRESETS:
         p = PRESETS[preset_choice]
         BITS = p["bits"]
@@ -217,10 +229,10 @@ def main():
     else:
         pub_hex = input("Enter compressed pubkey (hex): ").strip()
         TARGET_PUBKEY = bytes.fromhex(pub_hex)
-        BITS = int(input("Enter bit length: ") or 256)
+        BITS = int(input("Enter bit length: ") or 16)
         start_input = input(f"Enter k_start (hex) [Press Enter for auto 2^({BITS-1})]: ").strip()
         FULL_RANGE_START = int(start_input, 16) if start_input else (1 << (BITS-1))
-        SHOTS = int(input("Enter number of shots: ") or 1024)
+        SHOTS = int(input("Enter number of shots: ") or 32768)
 
     address = input(f"Enter target address (press Enter for {TARGET_ADDRESS}): ").strip()
     if address:
