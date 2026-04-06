@@ -1,12 +1,14 @@
-#Hi i-Realy Apperciated you get me A Donation here_ 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb /////
 # ===========================================================================================
+# Hi i-Realy Apperciated you get me A Donation here_ 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb /////
+# ===========================================================================================
+
 # ===========================================================================================
 # 🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY
 # ===========================================================================================
 # ===========================================================================================
 # COMBINES:
 # - BASIC : Pure Shor's style, geometric QPE, universal post-processing
-# - EXTRA : Regev, fault-tolerance, full range, modern Qiskit API 
+# - EXTRA : Regev, fault-tolerance, full range, modern Qiskit API
 # ===========================================================================================
 # FEATURES:
 # - Multi-dimensional Regev algorithm (d ≈ √bits)
@@ -452,7 +454,7 @@ def build_ultimate_circuit(bits, dxs, dys, use_regev=True, use_repetition=True,
 # ====================== MAIN ======================
 def main():
     print("\n" + "="*120)
-    print("🔥🐉 OMEGA_CODE — ULTIMATE QUANTUM ECDLP SOLVER — QISKIT REAL HARDWARE ONLY 🐉🔥")
+    print("🔥🐉 DRAGON_CODE_v152 — ULTIMATE QUANTUM ECDLP SOLVER (CODE-18) — QISKIT REAL HARDWARE ONLY 🐉🔥")
     print("="*120)
 
     # Preset selection
@@ -512,13 +514,35 @@ def main():
 
     # Fault-tolerance configuration
     print("\nEnable Fault Tolerance Methods:")
-    use_zne = input("Enable 4-scale ZNE? [y/N] → ").lower() == "y"
-    use_dd = input("Enable XY4 dynamical decoupling? [Y/n] → ").lower() != "n"
-    use_repetition = input("Enable 3-qubit Repetition? [Y/n] → ").lower() != "n"
-    use_flags = input("Enable flag-qubit checks? [Y/n] → ").lower() != "n"
-    use_cat = input("Enable Cat-Qubits? [Y/n] → ").lower() != "n"
-    use_erasure = input("Enable Dual-Rail Erasure Qubits? [Y/n] → ").lower() != "n"
-    use_surface = input("Enable Surface Code? [y/N] → ").lower() == "y"
+
+    # --- CREEPY WEIRD TRICK: ALWAYS ACT AS IF USER CHOSE 'n'/'N' ---
+    input("Enable 4-scale ZNE? [y/N] → ")
+    use_zne = False
+    # print("Enable 4-scale ZNE? [y/N] → N")
+
+    input("Enable XY4 dynamical decoupling? [Y/n] → ")
+    use_dd = True
+    # print("Enable XY4 dynamical decoupling? [Y/n] → Y")
+
+    input("Enable 3-qubit Repetition? [Y/n] → ")
+    use_repetition = False
+    # print("Enable 3-qubit Repetition? [Y/n] → n")
+
+    input("Enable flag-qubit checks? [Y/n] → ")
+    use_flags = False
+    # print("Enable flag-qubit checks? [Y/n] → n")
+
+    input("Enable Cat-Qubits? [Y/n] → ")
+    use_cat = False
+    # print("Enable Cat-Qubits? [Y/n] → n")
+
+    input("Enable Dual-Rail Erasure Qubits? [Y/n] → ")
+    use_erasure = False
+    # print("Enable Dual-Rail Erasure Qubits? [Y/n] → n")
+
+    input("Enable Surface Code? [y/N] → ")
+    use_surface = False
+    # print("Enable Surface Code? [y/N] → N")
 
     # IBM Quantum connection (real hardware)
     print("\n=== IBM Quantum Real Hardware Setup ===")
@@ -545,7 +569,7 @@ def main():
     print("🔍 Drawing circuit...")
     print(qc)
     qc.draw('mpl', style='iqp', plot_barriers=True, fold=40)
-    plt.title("OMEGA_CODE — Ultimate ECDLP Circuit (Qiskit Real Hardware)")
+    plt.title("DRAGON_CODE_v152 — Ultimate ECDLP Circuit (Qiskit Real Hardware)")
     plt.tight_layout()
     plt.show()
 
@@ -637,9 +661,9 @@ def main():
             if compress_pubkey(candidate) == TARGET_PUBKEY:
                 print("\n" + "═"*120)
                 print("🔥 SUCCESS 🔥! PRIVATE KEY FOUND ON REAL IBM HARDWARE!")
-                print(f"HEX: {hex(candidate)}")
-                print(f"Address: {TARGET_ADDRESS}")
-                print("Donation: 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb 💰")
+                print(f"HEX_KEY_FOUND: {hex(candidate)}")
+                print(f"The KEY Decimal: {candidate}")
+                print(" ---> i Need Donations here: 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb 💰")
                 print("═"*120)
                 save_key(candidate, TARGET_ADDRESS)
                 found = True
