@@ -97,10 +97,10 @@ def modinv(a, m):
     if g != 1:
         return None
     return x % m
-    
+
 def calculate_keyspace_start(bits: int) -> int:
-    return 1 << (bits - 1)
-    
+    return 1 << (bits - 1)    
+
 def compress_pubkey(privkey):
     sk = SigningKey.from_secret_exponent(privkey, curve=SECP256k1)
     vk = sk.verifying_key
@@ -434,7 +434,6 @@ def main():
     else:
         pub_hex = input("Enter compressed pubkey (hex): ").strip()
         bits = int(input("Enter bit length: ") or 15)
-        start_input = input(f"Enter k_start (hex) [Press Enter for auto 2^({bits-1})]: ").strip()
         start_input = input(f"Enter k_start (hex) [Press Enter for auto 2^({bits-1})]: ").strip()
         if start_input:
             k_start = int(start_input, 16)
