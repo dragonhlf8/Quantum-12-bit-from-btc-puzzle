@@ -1,5 +1,4 @@
-# ===========================================================================================
-# Hi i-Realy Apperciated you get me A Donation here_ 1Bu4CR8Bi5AXQG8pnu1avny88C5CCgWKfb /////
+
 # ===========================================================================================
 
 # ===========================================================================================
@@ -515,7 +514,7 @@ def main():
     # Fault-tolerance configuration
     print("\nEnable Fault Tolerance Methods:")
 
-    # --- CREEPY WEIRD TRICK: ALWAYS ACT AS IF USER CHOSE 'n'/'N' ---
+    # --- EXTRA INTERACTIVES : Current Best Settings ---
     input("Enable 4-scale ZNE? [y/N] → ")
     use_zne = False
     # print("Enable 4-scale ZNE? [y/N] → N")
@@ -595,7 +594,7 @@ def main():
     result = job.result()
     pub_result = result[0]
 
-    # --- ALWAYS COMBINE ALL CLASSICAL REGISTERS ---
+    # --- ALWAYS COMBINE CLASSICAL REGISTERS ---
     counts = Counter()
     # Try main 'c' register first (Regev path)
     if hasattr(pub_result.data, 'c'):
